@@ -1,6 +1,9 @@
 import redis
 import uuid
 import time
+from collections import namedtuple
+
+Stats = namedtuple('Stats', ['pending', 'in_progress', 'expired'])
 
 
 class RedisHermes:
@@ -9,7 +12,7 @@ class RedisHermes:
         self.q_name = 'hermes:{}_queue'.format(q_name)
         self.q_name_processing = 'hermes:{}_processing'.format(q_name)
 
-    def _get_lock_name(self, msg_id: str):
+    def _get_lock_name(self, msg_id: str) -> str:
         return 'hermes:lock:{}'.format(msg_id)
 
     def _lock_job(self, msg_id: str, revive_after):
@@ -26,7 +29,7 @@ class RedisHermes:
         pipe.set(msg_id, msg)
         pipe.execute()
 
-    def get(self, revive_after=60):
+    def get(self, revive_after=60) -> 'Message':
         """Blocking call to redis returning a new message whenever it becomes
         available"""
         msg_id = self.r.brpoplpush(self.q_name, self.q_name_processing)
@@ -34,7 +37,7 @@ class RedisHermes:
         data = self.r.get(msg_id)
         return Message(self, msg_id, data)
 
-    def get_now(self, revive_after=60):
+    def get_now(self, revive_after=60) -> 'Message':
         """Non blocking call to redis returning a new message if any is available
         or None if none are available
         """
@@ -65,6 +68,21 @@ class RedisHermes:
                 # give consumer 5 seconds to lock the job, but use the maybe
                 # call to ensure we dont overwrite consumer lock
                 self._maybe_lock_job(msg_id, revive_after=5)
+
+    def stats(self) -> Stats:
+        pending = self.r.llen(self.q_name)
+        in_progress = self.r.llen(self.q_name_processing)
+
+        in_progress_queue = self.r.lrange(self.q_name_processing, 0, -1)
+        pipe = self.r.pipeline(transaction=False)
+        for msg_id in in_progress_queue:
+            pipe.get(self._get_lock_name(msg_id))
+
+        locks = pipe.execute()
+        now_time = time.time()
+        expired = len([lock for lock in locks if lock is not None and int(lock) < int(now_time)])
+
+        return Stats(pending=pending, in_progress=in_progress, expired=expired)
 
 
 class Message:
