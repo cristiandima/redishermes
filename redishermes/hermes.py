@@ -1,6 +1,7 @@
 import redis
 import uuid
 import time
+import typing
 from collections import namedtuple
 
 Stats = namedtuple('Stats', ['pending', 'in_progress', 'expired'])
@@ -37,7 +38,7 @@ class RedisHermes:
         data = self.r.get(msg_id)
         return Message(self, msg_id, data)
 
-    def get_now(self, revive_after=60) -> 'Message':
+    def get_now(self, revive_after=60) -> typing.Union['Message', None]:
         """Non blocking call to redis returning a new message if any is available
         or None if none are available
         """
